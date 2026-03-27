@@ -65,7 +65,7 @@ Write Tom's counter-pitch reply.`
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'level', level })}\n\n`))
 
         const stream = await client.messages.create({
-          model: 'claude-sonnet-4-6-20250514',
+          model: 'claude-sonnet-4-20250514',
           max_tokens: 1000,
           system: systemPrompt,
           messages: [{ role: 'user', content: userPrompt }],
