@@ -20,8 +20,10 @@ export default function Home() {
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState('')
   const [chaosLevel, setChaosLevel] = useState<1 | 2 | 3>(1)
+  const [chaosOverride, setChaosOverride] = useState<0 | 1 | 2 | 3>(0) // 0 = auto
   const [pitchCount, setPitchCount] = useState(0)
   const [copied, setCopied] = useState(false)
+  const [saved, setSaved] = useState(false)
 
   const pitchLog = useRef<Record<string, number>>({})
   const outputRef = useRef<HTMLDivElement>(null)
@@ -41,6 +43,7 @@ export default function Home() {
     setStreaming(true)
     setOutput('')
     setSubjectLine('')
+    setSaved(false)
 
     const key = getSenderKey()
     pitchLog.current[key] = (pitchLog.current[key] || 0) + 1
@@ -48,10 +51,15 @@ export default function Home() {
     setPitchCount(count)
 
     try {
+      const body: Record<string, unknown> = {
+        senderName, senderCompany, websiteUrl, emailText, pitchCount: count,
+      }
+      if (chaosOverride > 0) body.chaosOverride = chaosOverride
+
       const res = await fetch('/api/counter-pitch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ senderName, senderCompany, websiteUrl, emailText, pitchCount: count }),
+        body: JSON.stringify(body),
       })
 
       if (!res.ok) {
@@ -93,8 +101,8 @@ export default function Home() {
 
               if (subjectParsed) {
                 const delimIdx2 = fullText.indexOf('\n---\n')
-                const body = fullText.substring(delimIdx2 + 5).trimStart()
-                setOutput(body)
+                const bodyText = fullText.substring(delimIdx2 + 5).trimStart()
+                setOutput(bodyText)
               }
             } else if (data.type === 'error') {
               throw new Error(data.error)
@@ -125,6 +133,20 @@ export default function Home() {
     })
   }
 
+  async function saveToHallOfFame() {
+    try {
+      const res = await fetch('/api/hall-of-fame', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderName, senderCompany, subject: subjectLine,
+          body: output, level: chaosLevel, pitchCount,
+        }),
+      })
+      if (res.ok) setSaved(true)
+    } catch { /* ignore */ }
+  }
+
   useEffect(() => {
     if (streaming && outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight
@@ -144,6 +166,10 @@ export default function Home() {
           <span className={styles.serviceTag}>CRO</span>
           <span className={styles.serviceTag}>AI Automation</span>
         </div>
+        <nav className={styles.nav}>
+          <a href="/hall-of-fame" className={styles.navLink}>Hall of Fame</a>
+          <a href="/analytics" className={styles.navLink}>Analytics</a>
+        </nav>
       </header>
 
       <div className={styles.card}>
@@ -167,6 +193,28 @@ export default function Home() {
       <div className={styles.card}>
         <label className={styles.label}>Their Email (paste the full thing)</label>
         <textarea className={styles.textarea} value={emailText} onChange={e => setEmailText(e.target.value)} placeholder="Paste their pitch email here..." />
+      </div>
+
+      <div className={styles.card}>
+        <label className={styles.label}>Chaos Level</label>
+        <div className={styles.chaosSelector}>
+          <button
+            className={`${styles.chaosBtn} ${chaosOverride === 0 ? styles.chaosBtnActive : ''}`}
+            onClick={() => setChaosOverride(0)}
+          >AUTO</button>
+          <button
+            className={`${styles.chaosBtn} ${styles.chaosBtnReal} ${chaosOverride === 1 ? styles.chaosBtnActive : ''}`}
+            onClick={() => setChaosOverride(1)}
+          >REAL</button>
+          <button
+            className={`${styles.chaosBtn} ${styles.chaosBtnChaos} ${chaosOverride === 2 ? styles.chaosBtnActive : ''}`}
+            onClick={() => setChaosOverride(2)}
+          >CHAOS</button>
+          <button
+            className={`${styles.chaosBtn} ${styles.chaosBtnNuclear} ${chaosOverride === 3 ? styles.chaosBtnActive : ''}`}
+            onClick={() => setChaosOverride(3)}
+          >NUCLEAR</button>
+        </div>
       </div>
 
       <button className={styles.btn} onClick={generate} disabled={loading}>
@@ -198,17 +246,23 @@ export default function Home() {
           </div>
 
           {!streaming && output && (
-            <>
+            <div className={styles.outputActions}>
               <button className={styles.copyBtn} onClick={copyAll}>
                 {copied ? '[ COPIED ]' : '[ COPY TO CLIPBOARD ]'}
               </button>
-              <p
-                className={styles.chaosMeter}
-                style={{ color: chaosLevel === 1 ? 'var(--accent)' : chaosLevel === 2 ? '#ff9500' : 'var(--danger)' }}
-              >
-                {`Pitch #${pitchCount} from this sender  ${'\u2588'.repeat(Math.min(pitchCount, 10))}`}
-              </p>
-            </>
+              <button className={styles.copyBtn} onClick={saveToHallOfFame} disabled={saved}>
+                {saved ? '[ SAVED ]' : '[ HALL OF FAME ]'}
+              </button>
+            </div>
+          )}
+
+          {!streaming && output && (
+            <p
+              className={styles.chaosMeter}
+              style={{ color: chaosLevel === 1 ? 'var(--accent)' : chaosLevel === 2 ? '#ff9500' : 'var(--danger)' }}
+            >
+              {`Pitch #${pitchCount} from this sender  ${'\u2588'.repeat(Math.min(pitchCount, 10))}`}
+            </p>
           )}
         </div>
       )}

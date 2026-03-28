@@ -4,9 +4,12 @@ export function buildPrompts(params: {
   websiteUrl: string
   emailText: string
   pitchCount: number
+  chaosOverride?: 1 | 2 | 3
+  websiteContext?: string
+  threadMessages?: string[]
 }) {
-  const { senderName, senderCompany, websiteUrl, emailText, pitchCount } = params
-  const level: 1 | 2 | 3 = pitchCount <= 1 ? 1 : pitchCount === 2 ? 2 : 3
+  const { senderName, senderCompany, websiteUrl, emailText, pitchCount, chaosOverride, websiteContext, threadMessages } = params
+  const level: 1 | 2 | 3 = chaosOverride || (pitchCount <= 1 ? 1 : pitchCount === 2 ? 2 : 3)
 
   const chaosInstruction =
     level === 1
@@ -14,6 +17,10 @@ export function buildPrompts(params: {
       : level === 2
         ? `This is pitch #${pitchCount} from this person -- they came back. Still counter-pitch with a real IdeaLift service, but ALSO mix in one completely absurd fake service Tom offers. IMPORTANT: Invent a brand new absurd service from scratch every time. It MUST be thematically related to whatever the sender is pitching -- riff on their industry, their product category, their jargon. If they sell SEO, the fake service should twist SEO into something unhinged. If they sell design, make it about design. Never reuse the same fake service twice. The more specific to their pitch and the more confidently deadpan, the funnier. Tom never breaks character. Still end with something real about IdeaLift.`
         : `This is pitch #${pitchCount} from this person -- they will not stop. Go full chaos. Tom now offers increasingly unhinged services alongside the real IdeaLift ones. IMPORTANT: Invent 3-4 brand new absurd services from scratch. Each one MUST riff on the sender's specific industry, product, or jargon -- twist what they're selling into something completely unhinged. If they sell analytics, make it about absurd analytics. If they sell recruiting, make it about absurd recruiting. Never reuse fake services from previous responses. Each service should sound hyper-specific, use confident metrics and pricing, and be delivered completely deadpan. Stack them alongside the real services naturally. Tom treats them all as equally legitimate. Still close with a real IdeaLift service and idealift.app.`
+
+  const websiteSection = websiteContext
+    ? `\n\nAbout the sender's company (from their website):\n${websiteContext}\n\nUse specific details from their website to make the counter-pitch more targeted and personal. Reference their own products, claims, or messaging back at them.`
+    : ''
 
   const systemPrompt = `You are writing a counter-pitch reply email on behalf of Tom, founder of IdeaLift (idealift.app).
 
@@ -27,7 +34,7 @@ About IdeaLift -- Tom and the team offer a diverse range of services:
 
 4. AI WORKFLOW AUTOMATION: Building custom AI-powered workflows that replace manual processes. From internal ops to customer-facing features. Not chatbot slop -- actual useful automation that saves real hours.
 
-Tom's voice: direct, dry, short sentences. No corporate fluff. Military clarity. Slightly abrasive edge. No em dashes. No "leverage," "synergy," "dive in," "at the end of the day." Deadpan humor -- he never winks at the joke. Confident but not arrogant. Talks like someone who has built things, not someone who talks about building things.
+Tom's voice: direct, dry, short sentences. No corporate fluff. Military clarity. Slightly abrasive edge. No em dashes. No "leverage," "synergy," "dive in," "at the end of the day." Deadpan humor -- he never winks at the joke. Confident but not arrogant. Talks like someone who has built things, not someone who talks about building things.${websiteSection}
 
 Task: ${chaosInstruction}
 
@@ -38,14 +45,19 @@ SUBJECT: [a punchy email subject line]
 
 Keep the email body under 200 words. No formal sign-off block. End with a line that invites reply or action.`
 
+  // Thread-aware or single email
+  let emailSection: string
+  if (threadMessages && threadMessages.length > 1) {
+    emailSection = `Full email thread (oldest first):\n${threadMessages.map((m, i) => `--- Message ${i + 1} ---\n${m}`).join('\n\n')}`
+  } else {
+    emailSection = `Their email:\n---\n${emailText}\n---`
+  }
+
   const userPrompt = `Inbound pitcher: ${senderName || 'Unknown'} from ${senderCompany || 'their company'}
 Their website: ${websiteUrl || 'not provided'}
 Pitch number from this person: ${pitchCount}
 
-Their email:
----
-${emailText}
----
+${emailSection}
 
 Write Tom's counter-pitch reply.`
 

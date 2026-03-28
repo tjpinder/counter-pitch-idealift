@@ -24,6 +24,9 @@
 *.tsbuildinfo
 next-env.d.ts
 
+# data
+/data/
+
 # misc
 .DS_Store
 *.pem

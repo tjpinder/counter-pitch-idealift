@@ -254,6 +254,62 @@
   letter-spacing: 1px;
 }
 
+/* Nav */
+.nav {
+  display: flex;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.navLink {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.navLink:hover {
+  color: var(--accent);
+}
+
+/* Chaos selector */
+.chaosSelector {
+  display: flex;
+  gap: 6px;
+}
+
+.chaosBtn {
+  flex: 1;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  text-align: center;
+}
+
+.chaosBtn:hover { border-color: var(--accent); color: var(--accent); }
+
+.chaosBtnActive { border-color: var(--accent); color: var(--accent); background: #111; }
+.chaosBtnReal.chaosBtnActive { border-color: var(--accent); color: var(--accent); }
+.chaosBtnChaos.chaosBtnActive { border-color: #ff9500; color: #ff9500; }
+.chaosBtnNuclear.chaosBtnActive { border-color: var(--danger); color: var(--danger); }
+
+/* Output actions */
+.outputActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* Footer */
 .footer {
   margin-top: 48px;

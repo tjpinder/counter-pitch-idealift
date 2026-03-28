@@ -3,53 +3,24 @@
  *
  * Google Apps Script that scans for cold pitch emails,
  * generates counter-pitches via the Counter Pitch API,
- * and creates draft replies in Gmail.
+ * and creates draft replies (or auto-sends for repeat offenders).
  *
  * Setup:
  * 1. Open script.google.com, create a new project
  * 2. Paste this code into Code.gs
- * 3. Set script properties (File > Project settings > Script properties):
+ * 3. Update appsscript.json manifest (View > Show manifest)
+ * 4. Set script properties (Project Settings > Script properties):
  *    - API_URL: https://counter-pitch-idealift.azurewebsites.net
  *    - API_KEY: (your SITE_API_KEY value)
- * 4. Run setupTrigger() once to create the 5-minute timer
- * 5. Authorize when prompted
+ *    - AUTO_SEND_THRESHOLD: 4 (set to 0 to disable auto-send)
+ *    - DISCORD_NOTIFY: true (set to false to disable)
+ * 5. Run setupTrigger() once to create the 5-minute timer
+ * 6. Authorize when prompted
  */
 
 // ============================================================
 // CONFIGURATION
 // ============================================================
-
-var COLD_PITCH_KEYWORDS = [
-  'quick call',
-  'partnership opportunity',
-  'reaching out',
-  'I noticed your company',
-  'would love to connect',
-  'I came across',
-  'boost your',
-  'grow your',
-  'increase your revenue',
-  'schedule a demo',
-  'free audit',
-  'free trial',
-  'we help companies',
-  'we specialize in',
-  'I wanted to reach out',
-  'are you the right person',
-  'just following up',
-  'checking in on my last email',
-  'I tried reaching you',
-  'quick question for you',
-  'we work with companies like',
-  'I saw that you',
-  'thought you might be interested',
-  'limited time offer',
-  'exclusive opportunity',
-  'scale your',
-  'transform your',
-  'revolutionize your',
-  'take your business to the next level'
-];
 
 var LABEL_NAME = 'counter-pitched';
 var SEARCH_NEWER_THAN = '1d';
@@ -62,7 +33,6 @@ var SEARCH_NEWER_THAN = '1d';
  * Run once to set up the recurring trigger.
  */
 function setupTrigger() {
-  // Remove existing triggers to avoid duplicates
   var triggers = ScriptApp.getProjectTriggers();
   for (var i = 0; i < triggers.length; i++) {
     if (triggers[i].getHandlerFunction() === 'processInbox') {
@@ -109,7 +79,8 @@ function processInbox() {
     var body = lastMessage.getPlainBody();
     var from = lastMessage.getFrom();
 
-    if (!isColdPitch(body, from)) {
+    // AI-powered cold pitch detection
+    if (!detectColdPitch(body, from)) {
       continue;
     }
 
@@ -125,28 +96,44 @@ function processInbox() {
 
     var pitchCount = incrementPitchCount(senderInfo.key);
 
+    // Collect full thread messages for context
+    var threadMessages = [];
+    for (var j = 0; j < messages.length; j++) {
+      threadMessages.push(messages[j].getPlainBody());
+    }
+
+    // Check auto-send threshold
+    var autoSendThreshold = parseInt(PropertiesService.getScriptProperties().getProperty('AUTO_SEND_THRESHOLD') || '0');
+    var shouldAutoSend = autoSendThreshold > 0 && pitchCount >= autoSendThreshold;
+
     try {
       var result = callCounterPitchAPI({
         senderName: senderInfo.name,
         senderCompany: senderInfo.company,
-        websiteUrl: '',
+        websiteUrl: senderInfo.domain ? 'https://' + senderInfo.domain : '',
         emailText: body,
-        pitchCount: pitchCount
+        pitchCount: pitchCount,
+        threadMessages: threadMessages.length > 1 ? threadMessages : undefined,
+        source: 'gmail-auto',
+        autoSent: shouldAutoSend
       });
 
       if (result && result.body) {
         var subject = result.subject || ('Re: ' + lastMessage.getSubject());
-        if (!subject.toLowerCase().startsWith('re:')) {
-          subject = 'Re: ' + lastMessage.getSubject();
+
+        if (shouldAutoSend) {
+          // AUTO-SEND for repeat offenders
+          lastMessage.reply(result.body);
+          Logger.log('AUTO-SENT to: ' + from + ' (pitch #' + pitchCount + ', level ' + result.level + ')');
+        } else {
+          // Create draft for review
+          thread.createDraftReply(result.body, {
+            subject: subject
+          });
+          Logger.log('Draft created for: ' + from + ' (pitch #' + pitchCount + ', level ' + result.level + ')');
         }
 
-        thread.createDraftReply(result.body, {
-          subject: subject
-        });
-
         thread.addLabel(label);
-
-        Logger.log('Draft created for: ' + from + ' (pitch #' + pitchCount + ', level ' + result.level + ')');
       }
     } catch (e) {
       Logger.log('Error processing ' + from + ': ' + e.message);
@@ -155,42 +142,67 @@ function processInbox() {
 }
 
 // ============================================================
-// COLD PITCH DETECTION
+// COLD PITCH DETECTION (AI-powered)
 // ============================================================
 
 /**
- * Heuristic check: does this email look like a cold pitch?
+ * Use Claude to classify whether an email is a cold pitch.
+ * Falls back to keyword heuristic if API call fails.
  */
-function isColdPitch(body, from) {
-  // Skip emails from known contacts (customize this list)
+function detectColdPitch(body, from) {
+  // Skip trusted domains
   var trustedDomains = getTrustedDomains();
   var fromDomain = extractDomain(from);
   if (trustedDomains.indexOf(fromDomain) !== -1) {
     return false;
   }
 
+  try {
+    var result = callClassifyAPI(body, from);
+    if (result && typeof result.isColdPitch === 'boolean') {
+      if (result.confidence < 0.6) return false; // Low confidence, skip
+      return result.isColdPitch;
+    }
+  } catch (e) {
+    Logger.log('Classification API failed, falling back to keywords: ' + e.message);
+  }
+
+  // Fallback: keyword heuristic
+  return keywordHeuristic(body);
+}
+
+/**
+ * Fallback keyword-based cold pitch detection.
+ */
+function keywordHeuristic(body) {
+  var keywords = [
+    'quick call', 'partnership opportunity', 'reaching out',
+    'I noticed your company', 'would love to connect', 'I came across',
+    'boost your', 'grow your', 'increase your revenue', 'schedule a demo',
+    'free audit', 'free trial', 'we help companies', 'we specialize in',
+    'I wanted to reach out', 'are you the right person', 'just following up',
+    'checking in on my last email', 'we work with companies like',
+    'thought you might be interested', 'scale your', 'transform your'
+  ];
+
   var lowerBody = body.toLowerCase();
   var matchCount = 0;
-
-  for (var i = 0; i < COLD_PITCH_KEYWORDS.length; i++) {
-    if (lowerBody.indexOf(COLD_PITCH_KEYWORDS[i].toLowerCase()) !== -1) {
+  for (var i = 0; i < keywords.length; i++) {
+    if (lowerBody.indexOf(keywords[i].toLowerCase()) !== -1) {
       matchCount++;
     }
   }
-
-  // Need at least 2 keyword matches to flag as cold pitch
   return matchCount >= 2;
 }
 
 /**
  * Get trusted domains that should never be flagged.
- * Add your own domains here.
  */
 function getTrustedDomains() {
   return [
     'idealift.app',
+    'startvest.ai',
     'gmail.com',
-    // Add more trusted domains
   ];
 }
 
@@ -198,10 +210,6 @@ function getTrustedDomains() {
 // SENDER PARSING
 // ============================================================
 
-/**
- * Parse sender info from Gmail "From" header.
- * Format: "Name <email@domain.com>" or just "email@domain.com"
- */
 function parseSender(from) {
   var name = '';
   var email = '';
@@ -216,7 +224,6 @@ function parseSender(from) {
 
   var domain = email.split('@')[1] || '';
   var company = domain.split('.')[0] || '';
-  // Capitalize first letter
   company = company.charAt(0).toUpperCase() + company.slice(1);
 
   return {
@@ -237,10 +244,6 @@ function extractDomain(from) {
 // PITCH COUNT TRACKING
 // ============================================================
 
-/**
- * Get and increment the pitch count for a sender.
- * Uses PropertiesService for persistence across runs.
- */
 function incrementPitchCount(senderKey) {
   var props = PropertiesService.getUserProperties();
   var counts = JSON.parse(props.getProperty('pitchCounts') || '{}');
@@ -261,29 +264,27 @@ function resetPitchCounts() {
 }
 
 // ============================================================
-// API
+// API CALLS
 // ============================================================
 
-/**
- * Call the Counter Pitch sync API.
- */
-function callCounterPitchAPI(params) {
+function getAPIConfig() {
   var props = PropertiesService.getScriptProperties();
   var apiUrl = props.getProperty('API_URL');
   var apiKey = props.getProperty('API_KEY');
-
   if (!apiUrl || !apiKey) {
     throw new Error('API_URL and API_KEY must be set in Script Properties');
   }
+  return { apiUrl: apiUrl.replace(/\/$/, ''), apiKey: apiKey };
+}
 
-  var url = apiUrl.replace(/\/$/, '') + '/api/counter-pitch/sync';
+function callCounterPitchAPI(params) {
+  var config = getAPIConfig();
+  var url = config.apiUrl + '/api/counter-pitch/sync';
 
   var options = {
     method: 'post',
     contentType: 'application/json',
-    headers: {
-      'x-api-key': apiKey
-    },
+    headers: { 'x-api-key': config.apiKey },
     payload: JSON.stringify(params),
     muteHttpExceptions: true
   };
@@ -298,20 +299,36 @@ function callCounterPitchAPI(params) {
   return JSON.parse(response.getContentText());
 }
 
+function callClassifyAPI(emailText, from) {
+  var config = getAPIConfig();
+  var url = config.apiUrl + '/api/classify';
+
+  var options = {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-api-key': config.apiKey },
+    payload: JSON.stringify({ emailText: emailText, from: from }),
+    muteHttpExceptions: true
+  };
+
+  var response = UrlFetchApp.fetch(url, options);
+  var code = response.getResponseCode();
+
+  if (code !== 200) {
+    throw new Error('Classify API returned ' + code);
+  }
+
+  return JSON.parse(response.getContentText());
+}
+
 // ============================================================
 // GMAIL ADD-ON (Phase 2)
 // ============================================================
 
-/**
- * Add-on homepage trigger.
- */
 function onHomepage(e) {
   return createHomepageCard();
 }
 
-/**
- * Add-on contextual trigger: fires when user opens a message.
- */
 function onGmailMessage(e) {
   var messageId = e.gmail.messageId;
   var accessToken = e.gmail.accessToken;
@@ -323,7 +340,15 @@ function onGmailMessage(e) {
   var senderInfo = parseSender(from);
   var currentCount = getPitchCount(senderInfo.key);
 
-  return createMessageCard(senderInfo, body, currentCount, messageId);
+  // Collect thread messages
+  var thread = message.getThread();
+  var messages = thread.getMessages();
+  var threadMessages = [];
+  for (var i = 0; i < messages.length; i++) {
+    threadMessages.push(messages[i].getPlainBody());
+  }
+
+  return createMessageCard(senderInfo, body, currentCount, messageId, threadMessages);
 }
 
 function createHomepageCard() {
@@ -331,13 +356,15 @@ function createHomepageCard() {
   var counts = JSON.parse(props.getProperty('pitchCounts') || '{}');
   var total = Object.keys(counts).length;
 
+  var autoThreshold = PropertiesService.getScriptProperties().getProperty('AUTO_SEND_THRESHOLD') || '0';
+
   var card = CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader()
       .setTitle('COUNTER PITCH')
       .setSubtitle('They pitch you. Tom pitches back harder.'))
     .addSection(CardService.newCardSection()
       .addWidget(CardService.newTextParagraph()
-        .setText('Tracked senders: ' + total))
+        .setText('Tracked senders: ' + total + '\nAuto-send threshold: pitch #' + autoThreshold))
       .addWidget(CardService.newTextButton()
         .setText('RESET PITCH COUNTS')
         .setOnClickAction(CardService.newAction()
@@ -346,10 +373,11 @@ function createHomepageCard() {
   return card.build();
 }
 
-function createMessageCard(senderInfo, body, currentCount, messageId) {
-  var chaosLabel = currentCount === 0 ? 'REAL MODE (first pitch)' :
-                   currentCount === 1 ? 'CHAOS MODE (pitch #2)' :
-                   'UNHINGED MODE (pitch #' + (currentCount + 1) + ')';
+function createMessageCard(senderInfo, body, currentCount, messageId, threadMessages) {
+  var nextCount = currentCount + 1;
+  var chaosLabel = nextCount === 1 ? 'REAL MODE' :
+                   nextCount === 2 ? 'CHAOS MODE' :
+                   'UNHINGED MODE (pitch #' + nextCount + ')';
 
   var card = CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader()
@@ -365,7 +393,16 @@ function createMessageCard(senderInfo, body, currentCount, messageId) {
         .setContent(senderInfo.company))
       .addWidget(CardService.newKeyValue()
         .setTopLabel('Pitches from this sender')
-        .setContent(String(currentCount)))
+        .setContent(String(currentCount))))
+    .addSection(CardService.newCardSection()
+      .setHeader('Chaos Override')
+      .addWidget(CardService.newSelectionInput()
+        .setType(CardService.SelectionInputType.RADIO_BUTTON)
+        .setFieldName('chaosOverride')
+        .addItem('Auto (based on pitch count)', '0', true)
+        .addItem('Real Mode', '1', false)
+        .addItem('Chaos Mode', '2', false)
+        .addItem('Nuclear Mode', '3', false))
       .addWidget(CardService.newTextButton()
         .setText('FIRE BACK')
         .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
@@ -374,41 +411,55 @@ function createMessageCard(senderInfo, body, currentCount, messageId) {
           .setParameters({
             senderName: senderInfo.name,
             senderCompany: senderInfo.company,
+            senderDomain: senderInfo.domain || '',
             senderKey: senderInfo.key,
             emailBody: body.substring(0, 5000),
-            messageId: messageId
+            messageId: messageId,
+            threadMessages: JSON.stringify(threadMessages.map(function(m) { return m.substring(0, 2000); }))
           }))));
 
   return card.build();
 }
 
-/**
- * Handle "FIRE BACK" button click.
- */
 function onFireBack(e) {
   var params = e.commonEventObject.parameters;
+  var chaosOverride = parseInt(e.commonEventObject.formInputs && e.commonEventObject.formInputs.chaosOverride
+    ? e.commonEventObject.formInputs.chaosOverride.stringInputs.value[0]
+    : '0');
+
   var pitchCount = incrementPitchCount(params.senderKey);
 
+  var threadMessages;
   try {
-    var result = callCounterPitchAPI({
+    threadMessages = JSON.parse(params.threadMessages);
+  } catch (err) {
+    threadMessages = undefined;
+  }
+
+  try {
+    var apiParams = {
       senderName: params.senderName,
       senderCompany: params.senderCompany,
-      websiteUrl: '',
+      websiteUrl: params.senderDomain ? 'https://' + params.senderDomain : '',
       emailText: params.emailBody,
-      pitchCount: pitchCount
-    });
+      pitchCount: pitchCount,
+      threadMessages: threadMessages && threadMessages.length > 1 ? threadMessages : undefined,
+      source: 'gmail-addon',
+      autoSent: false
+    };
+    if (chaosOverride > 0) apiParams.chaosOverride = chaosOverride;
+
+    var result = callCounterPitchAPI(apiParams);
 
     var levelLabel = result.level === 1 ? 'REAL MODE' :
                      result.level === 2 ? 'CHAOS MODE' : 'UNHINGED MODE';
 
-    // Create draft reply
     var message = GmailApp.getMessageById(params.messageId);
     var thread = message.getThread();
     var subject = result.subject || ('Re: ' + message.getSubject());
 
     thread.createDraftReply(result.body, { subject: subject });
 
-    // Label the thread
     var label = getOrCreateLabel(LABEL_NAME);
     thread.addLabel(label);
 
