@@ -99,6 +99,7 @@ function processInbox() {
   var query = 'is:unread -from:me -label:' + LABEL_NAME + ' newer_than:' + SEARCH_NEWER_THAN;
 
   var threads = GmailApp.search(query, 0, 20);
+  var processedSenders = {};
 
   for (var i = 0; i < threads.length; i++) {
     var thread = threads[i];
@@ -113,6 +114,15 @@ function processInbox() {
     }
 
     var senderInfo = parseSender(from);
+
+    // Only process one thread per sender per run
+    if (processedSenders[senderInfo.key]) {
+      thread.addLabel(label);
+      Logger.log('Skipped duplicate sender in same run: ' + from);
+      continue;
+    }
+    processedSenders[senderInfo.key] = true;
+
     var pitchCount = incrementPitchCount(senderInfo.key);
 
     try {
