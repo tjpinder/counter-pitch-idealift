@@ -70,9 +70,23 @@ function removeTrigger() {
  */
 function processInbox() {
   var label = getOrCreateLabel(LABEL_NAME);
-  var query = 'in:anywhere is:unread -from:me -label:' + LABEL_NAME + ' newer_than:' + SEARCH_NEWER_THAN;
+  var baseQuery = '-from:me -label:' + LABEL_NAME + ' newer_than:' + SEARCH_NEWER_THAN;
 
-  var threads = GmailApp.search(query, 0, 20);
+  // Search inbox and spam separately (GmailApp.search excludes spam/trash by default)
+  Logger.log('Inbox query: ' + baseQuery);
+  var threads = GmailApp.search(baseQuery, 0, 20);
+  Logger.log('Inbox threads found: ' + threads.length);
+
+  var spamQuery = 'in:spam ' + baseQuery;
+  Logger.log('Spam query: ' + spamQuery);
+  var spamThreads = GmailApp.search(spamQuery, 0, 10);
+  Logger.log('Spam threads found: ' + spamThreads.length);
+
+  if (spamThreads.length > 0) {
+    threads = threads.concat(spamThreads);
+  }
+  Logger.log('Total threads to process: ' + threads.length);
+
   var processedSenders = {};
 
   for (var i = 0; i < threads.length; i++) {
@@ -82,9 +96,12 @@ function processInbox() {
 
     var body = lastMessage.getPlainBody();
     var from = lastMessage.getFrom();
+    Logger.log('Processing thread from: ' + from);
 
     // AI-powered cold pitch detection
-    if (!detectColdPitch(body, from)) {
+    var isColdPitch = detectColdPitch(body, from);
+    Logger.log('Cold pitch detection for ' + from + ': ' + isColdPitch);
+    if (!isColdPitch) {
       continue;
     }
 
