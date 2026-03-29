@@ -46,6 +46,10 @@ function setupTrigger() {
     .create();
 
   Logger.log('Trigger created: processInbox every 5 minutes');
+
+  // Run immediately so new inboxes get scanned right away
+  processInbox();
+  Logger.log('Initial inbox scan complete');
 }
 
 /**
@@ -66,7 +70,7 @@ function removeTrigger() {
  */
 function processInbox() {
   var label = getOrCreateLabel(LABEL_NAME);
-  var query = 'is:unread -from:me -label:' + LABEL_NAME + ' newer_than:' + SEARCH_NEWER_THAN;
+  var query = 'in:anywhere is:unread -from:me -label:' + LABEL_NAME + ' newer_than:' + SEARCH_NEWER_THAN;
 
   var threads = GmailApp.search(query, 0, 20);
   var processedSenders = {};
