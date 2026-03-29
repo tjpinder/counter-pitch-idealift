@@ -82,6 +82,11 @@ function processInbox() {
   var spamThreads = GmailApp.search(spamQuery, 0, 10);
   Logger.log('Spam threads found: ' + spamThreads.length);
 
+  // Track which threads are from spam
+  var spamThreadIds = {};
+  for (var s = 0; s < spamThreads.length; s++) {
+    spamThreadIds[spamThreads[s].getId()] = true;
+  }
   if (spamThreads.length > 0) {
     threads = threads.concat(spamThreads);
   }
@@ -123,9 +128,10 @@ function processInbox() {
       threadMessages.push(messages[j].getPlainBody());
     }
 
-    // Check auto-send threshold
+    // Auto-send for spam threads or repeat offenders past threshold
+    var isSpam = !!spamThreadIds[thread.getId()];
     var autoSendThreshold = parseInt(PropertiesService.getScriptProperties().getProperty('AUTO_SEND_THRESHOLD') || '0');
-    var shouldAutoSend = autoSendThreshold > 0 && pitchCount >= autoSendThreshold;
+    var shouldAutoSend = isSpam || (autoSendThreshold > 0 && pitchCount >= autoSendThreshold);
 
     try {
       var result = callCounterPitchAPI({
